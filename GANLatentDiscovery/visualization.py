@@ -33,18 +33,16 @@ def interpolate(G, z, shifts_r, shifts_count, dim, deformator=None, with_central
         shifted_images.append(shifted_image)
     return shifted_images
 def interpolate_shift(G, z, latent_shift, deformator=None, device='cpu'):
-    if not(z.size() == latent_shift.size()):
+    if not (z.size() == latent_shift.size()):
         if deformator is not None:
             annotated = list(deformator.annotation.values())
-        latent_shift_masked = torch.zeros_like(z).to(device)
+        latent_shift_masked = torch.zeros_like(z, device=device)
         for i in range(len(annotated)):
             latent_shift_masked[0][annotated[i]] = latent_shift[i]
         latent_shift = latent_shift_masked
     if deformator is not None:
         latent_shift = deformator(latent_shift)
-    else:
-        latent_shift = latent_shift
-    shifted_image = G.gen_shifted(z, latent_shift).cpu()[0]
+    shifted_image = G.gen_shifted(z, latent_shift)[0]
     return shifted_image
 
 
