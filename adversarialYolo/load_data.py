@@ -251,25 +251,20 @@ class PatchSimpleTransformer(nn.Module):
         self.maxangle = 20 / 180 * math.pi
         self.medianpooler = MedianPool2d(7,same=True)
 
-    def rect_occluding(self, num_rect=1, n_batch=8, n_feature=14, patch_size=300, with_cuda=True):
-        if(with_cuda):
-            device = 'cuda:0'
-        else:
-            device = 'cpu'
-        tensor_img = torch.full((3, patch_size, patch_size), 0.0).to(device)
-        for ttt in range(num_rect):
-            xs = torch.randint(0,int(patch_size/2),(1,))[0]
-            xe = torch.randint(xs,
-                                torch.min(torch.tensor(tensor_img.size()[-1]), xs+int(patch_size/2)),
-                                (1,))[0]
-            ys = torch.randint(0,int(patch_size/2),(1,))[0]
-            ye = torch.randint(ys,
-                                torch.min(torch.tensor(tensor_img.size()[-1]), ys+int(patch_size/2)),
-                                (1,))[0]
-            tensor_img[:,xs:xe,ys:ye] = 0.5
-        tensor_img_batch = tensor_img.unsqueeze(0) ##  torch.Size([1, 3, 300, 300])
-        tensor_img_batch = tensor_img_batch.expand(n_batch, n_feature, -1, -1, -1)  ##  torch.Size([8, 14, 3, 300, 300])
-        return tensor_img_batch.to(device)
+    def rect_occluding(self, num_rect=1, n_batch=8, n_feature=14, patch_size=300, device=None):
+        """Create rectangular occluders on the chosen device."""
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        tensor_img = torch.full((3, patch_size, patch_size), 0.0, device=device)
+        for _ in range(num_rect):
+            xs = torch.randint(0, patch_size // 2, (1,), device=device).item()
+            xe = torch.randint(xs, min(tensor_img.size(-1), xs + patch_size // 2), (1,), device=device).item()
+            ys = torch.randint(0, patch_size // 2, (1,), device=device).item()
+            ye = torch.randint(ys, min(tensor_img.size(-1), ys + patch_size // 2), (1,), device=device).item()
+            tensor_img[:, xs:xe, ys:ye] = 0.5
+        tensor_img_batch = tensor_img.unsqueeze(0)
+        tensor_img_batch = tensor_img_batch.expand(n_batch, n_feature, -1, -1, -1)
+        return tensor_img_batch
 
     def deg_to_rad(self, deg):
         return torch.tensor(deg * pi / 180.0).float()
@@ -396,35 +391,33 @@ class PatchSimpleTransformer(nn.Module):
         adv_patch = self.medianpooler(adv_patch.unsqueeze(0))
         # print("adv_patch medianpooler size: "+str(adv_patch.size())) ## torch.Size([1, 3, 300, 300])
         # Make a batch of patches
-        adv_patch = adv_patch.unsqueeze(0)#.unsqueeze(0)  ##  torch.Size([1, 1, 3, 300, 300])
+        adv_patch = adv_patch.unsqueeze(0)  ##  torch.Size([1, 1, 3, 300, 300])
         adv_batch = adv_patch.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)  ##  torch.Size([8, 14, 3, 300, 300])
         batch_size = torch.Size((lab_batch.size(0), lab_batch.size(1)))
 
-        if not(len(patch_mask)==0):
-            ## mask size : torch.Size([3, 300, 300])
-            patch_mask = patch_mask.unsqueeze(0)  ## mask size : torch.Size([1, 3, 300, 300])
-            mask_batch = patch_mask.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)  ## mask size : torch.Size([8, 14, 3, 300, 300])
+        if not (len(patch_mask) == 0):
+            patch_mask = patch_mask.to(device)
+            patch_mask = patch_mask.unsqueeze(0)
+            mask_batch = patch_mask.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)
 
         # Contrast, brightness and noise transforms
         
         # Create random contrast tensor
-        contrast = torch.FloatTensor(batch_size).uniform_(self.min_contrast, self.max_contrast)
+        contrast = torch.empty(batch_size, device=device).uniform_(self.min_contrast, self.max_contrast)
         contrast = contrast.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         contrast = contrast.expand(-1, -1, adv_batch.size(-3), adv_batch.size(-2), adv_batch.size(-1))
-        contrast = contrast
         # print("contrast size : "+str(contrast.size()))  ##  contrast size : torch.Size([8, 14, 3, 300, 300])
 
 
         # Create random brightness tensor
-        brightness = torch.FloatTensor(batch_size).uniform_(self.min_brightness, self.max_brightness)
+        brightness = torch.empty(batch_size, device=device).uniform_(self.min_brightness, self.max_brightness)
         brightness = brightness.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         brightness = brightness.expand(-1, -1, adv_batch.size(-3), adv_batch.size(-2), adv_batch.size(-1))
-        brightness = brightness
         # print("brightness size : "+str(brightness.size())) ##  brightness size : torch.Size([8, 14, 3, 300, 300])
 
 
         # Create random noise tensor
-        noise = torch.FloatTensor(adv_batch.size()).uniform_(-1, 1) * self.noise_factor
+        noise = torch.empty(adv_batch.size(), device=device).uniform_(-1, 1) * self.noise_factor
         # print("noise size : "+str(noise.size()))  ##  noise size : torch.Size([8, 14, 3, 300, 300])
 
         # # Apply contrast/brightness/noise, clamp
@@ -438,9 +431,11 @@ class PatchSimpleTransformer(nn.Module):
         adv_batch = adv_batch * contrast + brightness + noise
         if not(len(patch_mask)==0):
             adv_batch = adv_batch * mask_batch
-        if(with_rectOccluding):
-            rect_occluder = self.rect_occluding(num_rect=2, n_batch=adv_batch.size()[0], n_feature=adv_batch.size()[1], patch_size=adv_batch.size()[-1])
-            adv_batch = torch.where((rect_occluder == 0), adv_batch, rect_occluder)
+        if with_rectOccluding:
+            rect_occluder = self.rect_occluding(num_rect=2, n_batch=adv_batch.size()[0],
+                                               n_feature=adv_batch.size()[1], patch_size=adv_batch.size()[-1],
+                                               device=device)
+            adv_batch = torch.where(rect_occluder == 0, adv_batch, rect_occluder)
 
         if(with_black_trans):
             adv_batch = torch.clamp(adv_batch, 0.0, 0.99999)
@@ -663,25 +658,20 @@ class PatchTransformer(nn.Module):
         self.kernel = kernel.unsqueeze(0).unsqueeze(0).expand(3,3,-1,-1)
         '''
 
-    def rect_occluding(self, num_rect=1, n_batch=8, n_feature=14, patch_size=300, with_cuda=True):
-        if(with_cuda):
-            device = 'cuda:0'
-        else:
-            device = 'cpu'
-        tensor_img = torch.full((3, patch_size, patch_size), 0.0).to(device)
-        for ttt in range(num_rect):
-            xs = torch.randint(0,int(patch_size/2),(1,))[0]
-            xe = torch.randint(xs,
-                                torch.min(torch.tensor(tensor_img.size()[-1]), xs+int(patch_size/2)),
-                                (1,))[0]
-            ys = torch.randint(0,int(patch_size/2),(1,))[0]
-            ye = torch.randint(ys,
-                                torch.min(torch.tensor(tensor_img.size()[-1]), ys+int(patch_size/2)),
-                                (1,))[0]
-            tensor_img[:,xs:xe,ys:ye] = 0.5
-        tensor_img_batch = tensor_img.unsqueeze(0) ##  torch.Size([1, 3, 300, 300])
-        tensor_img_batch = tensor_img_batch.expand(n_batch, n_feature, -1, -1, -1)  ##  torch.Size([8, 14, 3, 300, 300])
-        return tensor_img_batch.to(device)
+    def rect_occluding(self, num_rect=1, n_batch=8, n_feature=14, patch_size=300, device=None):
+        """Create rectangular occluders on the chosen device."""
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        tensor_img = torch.full((3, patch_size, patch_size), 0.0, device=device)
+        for _ in range(num_rect):
+            xs = torch.randint(0, patch_size // 2, (1,), device=device).item()
+            xe = torch.randint(xs, min(tensor_img.size(-1), xs + patch_size // 2), (1,), device=device).item()
+            ys = torch.randint(0, patch_size // 2, (1,), device=device).item()
+            ye = torch.randint(ys, min(tensor_img.size(-1), ys + patch_size // 2), (1,), device=device).item()
+            tensor_img[:, xs:xe, ys:ye] = 0.5
+        tensor_img_batch = tensor_img.unsqueeze(0)
+        tensor_img_batch = tensor_img_batch.expand(n_batch, n_feature, -1, -1, -1)
+        return tensor_img_batch
 
     def forward(self, adv_patch, lab_batch, img_size, patch_mask=[], by_rectangle=False, do_rotate=True, rand_loc=True, with_black_trans=False, scale_rate=0.2, with_crease=False, with_projection=False, with_rectOccluding=False, enable_empty_patch=False, enable_no_random=False, enable_blurred=True):
         # torch.set_printoptions(edgeitems=sys.maxsize)
@@ -697,45 +687,47 @@ class PatchTransformer(nn.Module):
         # st()
                                             # np.save('gg', adv_batch.cpu().detach().numpy())   
                                             # gg=np.load('gg.npy')   np.argwhere(gg!=adv_batch.cpu().detach().numpy())
+        device = adv_patch.device
+
         def deg_to_rad(deg):
-            return torch.tensor(deg * pi / 180.0).float()
+            return torch.tensor(deg * pi / 180.0, device=device).float()
 
         def rad_to_deg(rad):
-            return torch.tensor(rad * 180.0 / pi).float()
+            return torch.tensor(rad * 180.0 / pi, device=device).float()
 
-        def get_warpR(anglex, angley, anglez,fov,w,h):
-            fov = torch.tensor(fov).float()
-            w   = torch.tensor(w).float()
-            h   = torch.tensor(h).float()
+        def get_warpR(anglex, angley, anglez, fov, w, h):
+            fov = torch.tensor(fov, device=device).float()
+            w = torch.tensor(w, device=device).float()
+            h = torch.tensor(h, device=device).float()
             z = torch.sqrt(w ** 2 + h ** 2) / 2 / torch.tan(deg_to_rad(fov / 2)).float()
             rx = torch.tensor([[1, 0, 0, 0],
-                        [0, torch.cos(deg_to_rad(anglex)), -torch.sin(deg_to_rad(anglex)), 0],
-                        [0, -torch.sin(deg_to_rad(anglex)), torch.cos(deg_to_rad(anglex)), 0, ],
-                        [0, 0, 0, 1]]).float()
+                               [0, torch.cos(deg_to_rad(anglex)), -torch.sin(deg_to_rad(anglex)), 0],
+                               [0, -torch.sin(deg_to_rad(anglex)), torch.cos(deg_to_rad(anglex)), 0],
+                               [0, 0, 0, 1]], device=device).float()
             ry = torch.tensor([[torch.cos(deg_to_rad(angley)), 0, torch.sin(deg_to_rad(angley)), 0],
-                        [0, 1, 0, 0],
-                        [-torch.sin(deg_to_rad(angley)), 0, torch.cos(deg_to_rad(angley)), 0, ],
-                        [0, 0, 0, 1]]).float()
+                               [0, 1, 0, 0],
+                               [-torch.sin(deg_to_rad(angley)), 0, torch.cos(deg_to_rad(angley)), 0],
+                               [0, 0, 0, 1]], device=device).float()
             rz = torch.tensor([[torch.cos(deg_to_rad(anglez)), torch.sin(deg_to_rad(anglez)), 0, 0],
-                        [-torch.sin(deg_to_rad(anglez)), torch.cos(deg_to_rad(anglez)), 0, 0],
-                        [0, 0, 1, 0],
-                        [0, 0, 0, 1]]).float()
+                               [-torch.sin(deg_to_rad(anglez)), torch.cos(deg_to_rad(anglez)), 0, 0],
+                               [0, 0, 1, 0],
+                               [0, 0, 0, 1]], device=device).float()
             r = torch.matmul(torch.matmul(rx, ry), rz)
-            pcenter = torch.tensor([h / 2, w / 2, 0, 0]).float()
-            p1 = torch.tensor([0, 0, 0, 0]).float() - pcenter
-            p2 = torch.tensor([w, 0, 0, 0]).float() - pcenter
-            p3 = torch.tensor([0, h, 0, 0]).float() - pcenter
-            p4 = torch.tensor([w, h, 0, 0]).float() - pcenter
+            pcenter = torch.tensor([h / 2, w / 2, 0, 0], device=device).float()
+            p1 = torch.tensor([0, 0, 0, 0], device=device).float() - pcenter
+            p2 = torch.tensor([w, 0, 0, 0], device=device).float() - pcenter
+            p3 = torch.tensor([0, h, 0, 0], device=device).float() - pcenter
+            p4 = torch.tensor([w, h, 0, 0], device=device).float() - pcenter
             dst1 = torch.matmul(r, p1)
             dst2 = torch.matmul(r, p2)
             dst3 = torch.matmul(r, p3)
             dst4 = torch.matmul(r, p4)
             list_dst = [dst1, dst2, dst3, dst4]
             org = torch.tensor([[0, 0],
-                            [w, 0],
-                            [0, h],
-                            [w, h]]).float()
-            dst = torch.zeros((4, 2)).float()
+                                [w, 0],
+                                [0, h],
+                                [w, h]], device=device).float()
+            dst = torch.zeros((4, 2), device=device).float()
             for i in range(4):
                 dst[i, 0] = list_dst[i][0] * z / (z - list_dst[i][2]) + pcenter[0]
                 dst[i, 1] = list_dst[i][1] * z / (z - list_dst[i][2]) + pcenter[1]
@@ -834,35 +826,33 @@ class PatchTransformer(nn.Module):
             adv_patch = adv_patch.unsqueeze(0)
         # print("adv_patch medianpooler size: "+str(adv_patch.size())) ## torch.Size([1, 3, 300, 300])
         # Make a batch of patches
-        adv_patch = adv_patch.unsqueeze(0)#.unsqueeze(0)  ##  torch.Size([1, 1, 3, 300, 300])
-        adv_batch = adv_patch.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)  ##  torch.Size([8, 14, 3, 300, 300])
+        adv_patch = adv_patch.unsqueeze(0)  ##  torch.Size([1, 1, 3, 300, 300])
+        adv_batch = adv_patch.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)
         batch_size = torch.Size((lab_batch.size(0), lab_batch.size(1)))
 
-        if not(len(patch_mask)==0):
-            ## mask size : torch.Size([3, 300, 300])
-            patch_mask = patch_mask.unsqueeze(0)  ## mask size : torch.Size([1, 3, 300, 300])
-            mask_batch = patch_mask.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)  ## mask size : torch.Size([8, 14, 3, 300, 300])
+        if not (len(patch_mask) == 0):
+            patch_mask = patch_mask.to(device)
+            patch_mask = patch_mask.unsqueeze(0)
+            mask_batch = patch_mask.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)
 
         # Contrast, brightness and noise transforms
         
         # Create random contrast tensor
-        contrast = torch.FloatTensor(batch_size).uniform_(self.min_contrast, self.max_contrast)
+        contrast = torch.empty(batch_size, device=device).uniform_(self.min_contrast, self.max_contrast)
         contrast = contrast.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         contrast = contrast.expand(-1, -1, adv_batch.size(-3), adv_batch.size(-2), adv_batch.size(-1))
-        contrast = contrast
         # print("contrast size : "+str(contrast.size()))  ##  contrast size : torch.Size([8, 14, 3, 300, 300])
 
 
         # Create random brightness tensor
-        brightness = torch.FloatTensor(batch_size).uniform_(self.min_brightness, self.max_brightness)
+        brightness = torch.empty(batch_size, device=device).uniform_(self.min_brightness, self.max_brightness)
         brightness = brightness.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         brightness = brightness.expand(-1, -1, adv_batch.size(-3), adv_batch.size(-2), adv_batch.size(-1))
-        brightness = brightness
         # print("brightness size : "+str(brightness.size())) ##  brightness size : torch.Size([8, 14, 3, 300, 300])
 
 
         # Create random noise tensor
-        noise = torch.FloatTensor(adv_batch.size()).uniform_(-1, 1) * self.noise_factor
+        noise = torch.empty(adv_batch.size(), device=device).uniform_(-1, 1) * self.noise_factor
         # print("noise size : "+str(noise.size()))  ##  noise size : torch.Size([8, 14, 3, 300, 300])
         # print(noise[0,0,0,:10,0])
         # # Apply contrast/brightness/noise, clamp
@@ -880,9 +870,11 @@ class PatchTransformer(nn.Module):
             adv_batch = adv_batch * contrast + brightness + noise
         if not(len(patch_mask)==0):
             adv_batch = adv_batch * mask_batch
-        if(with_rectOccluding):
-            rect_occluder = self.rect_occluding(num_rect=2, n_batch=adv_batch.size()[0], n_feature=adv_batch.size()[1], patch_size=adv_batch.size()[-1])
-            adv_batch = torch.where((rect_occluder == 0), adv_batch, rect_occluder)
+        if with_rectOccluding:
+            rect_occluder = self.rect_occluding(num_rect=2, n_batch=adv_batch.size()[0],
+                                               n_feature=adv_batch.size()[1], patch_size=adv_batch.size()[-1],
+                                               device=device)
+            adv_batch = torch.where(rect_occluder == 0, adv_batch, rect_occluder)
 
 
         # # get   gray
