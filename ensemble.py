@@ -118,14 +118,16 @@ def main():
 
 
     ### ----------------------------------------------------------- Initialization ---------------------------------------------------------------------- ###
-    # set random seed 
+    # set random seed
     Seed = apt.seed  # 37564 7777
     torch.manual_seed(Seed)
-    torch.cuda.manual_seed(Seed)
-    torch.cuda.manual_seed_all(Seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(Seed)
+        torch.cuda.manual_seed_all(Seed)
     np.random.seed(Seed)
     random.seed(Seed)
-    device = get_default_device() # cuda or cpu
+    device = get_default_device()  # cuda or cpu
+    print(f"device : {device}")
 
     # no enable_shift_deformator no enable_human_annotated_directions
     if not(enable_shift_deformator):
@@ -160,6 +162,9 @@ def main():
         deformator, G, shift_predictor = load_from_dir(
             './GANLatentDiscovery/models/pretrained/deformators/BigGAN/',
             G_weights='./GANLatentDiscovery/models/pretrained/generators/BigGAN/G_ema.pth')
+        deformator = deformator.to(device)
+        G = G.to(device)
+        shift_predictor = shift_predictor.to(device)
         generator_biggan = G
         if enable_discriminator == True:
             discriminator_biggan = None
@@ -186,7 +191,7 @@ def main():
         # latent_shift_gan = torch.rand(len_latent, device=device).requires_grad_(True) 
         latent_shift_gan = torch.normal(0.0, torch.ones(len_latent)).to(device).requires_grad_(True)                                        # the delta
     elif method_num ==3:
-        stylegan_G = run_generator.get_style_gan2()
+        stylegan_G = run_generator.get_style_gan2().to(device)
         len_z = stylegan_G.latent_size
         annotated_idx = []
         len_latent = len_z
@@ -267,6 +272,7 @@ def main():
             batch_size_second=1
     if("yolov5" in model_name or "yolov8" in model_name or "yolov9" in model_name or "yolov10" in model_name):
         detector = YOLO(model_name+".pt")
+        detector.to(device)
         batch_size_second      = 8
     # if(model_name == "yolov8"):
     #     detectorYolov8 = YOLO("yolov8n.pt")
@@ -281,14 +287,14 @@ def main():
     if(model_name == "fasterrcnn"):
         # just use fasterrcnn directly
         batch_size_second = 8
-        detector = FasterrcnnResnet50()
+        detector = FasterrcnnResnet50().to(device)
     if(model_name == "maskrcnn"):
-        detector = MaskrcnnResnet50()
+        detector = MaskrcnnResnet50().to(device)
     if(model_name == "nanodet"):
         batch_size_second = 8
         onnx_model = onnx.load('nanodet.onnx')
         onnx_runtime = ort.InferenceSession('nanodet.onnx')
-        detector = onnx2torch.convert(onnx_model)
+        detector = onnx2torch.convert(onnx_model).to(device)
         detector.input_size = onnx_runtime.get_inputs()[0].shape[1:]
         detector.output_size = onnx_runtime.get_outputs()[0].shape[1:]
         num_offsets = 32
@@ -296,6 +302,8 @@ def main():
 
     finish = time.time()
     print('Load detector in %f seconds.' % (finish - start))
+    if hasattr(detector, 'to'):
+        detector = detector.to(device)
 
 
     ### -----------------------------------------------------------   DataLoader   ---------------------------------------------------------------------- ###
@@ -332,10 +340,7 @@ def main():
 
     # st()
     # TV
-    if(device == "cuda"):
-        total_variation = TotalVariation().cuda()
-    else:
-        total_variation = TotalVariation()
+    total_variation = TotalVariation().to(device)
 
 
     ### ---------------------------------------------------------- Checkpoint & Init -------------------------------------------------------------------- ###
@@ -343,7 +348,8 @@ def main():
     epoch_length_second  = len(train_loader_second)
     ep_loss_det   = 0
     ep_loss_tv    = 0
-    torch.cuda.empty_cache()
+    if device.type == 'cuda':
+        torch.cuda.empty_cache()
     # Create optimizers
     print(f"Creating optimizer with lr: {learning_rate}")
     opt_ap = torch.optim.Adam([rowPatch], lr=learning_rate, betas=(0.9, 0.999), amsgrad=True)
@@ -370,12 +376,8 @@ def main():
 
     # init & and show the length of one epoch
     print(f'One epoch lenght is {len(train_loader_second)}')
-    if torch.cuda.is_available():
-        patch_transformer = PatchTransformer().cuda()
-        patch_applier = PatchApplier().cuda()
-    else:
-        patch_transformer = PatchTransformer()
-        patch_applier = PatchApplier()
+    patch_transformer = PatchTransformer().to(device)
+    patch_applier = PatchApplier().to(device)
     p_img_batch = []
     fake_images_denorm = []
 
