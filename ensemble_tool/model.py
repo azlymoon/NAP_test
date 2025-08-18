@@ -358,7 +358,7 @@ def train_rowPtach(method_num, generator
             else:
                 p_img_batch = input_imgs
             if discriminator is not None:
-                D_loss = discriminator(fake_images,torch.Tensor([259]).long().cuda())
+                D_loss = discriminator(fake_images, torch.tensor([259], device=device).long())
             else:
                 D_loss = 0
             # st()
@@ -571,7 +571,7 @@ def train_rowPtach(method_num, generator
             else:
                 p_img_batch = input_imgs
             if discriminator is not None:
-                D_loss = discriminator(fake_images,torch.Tensor([259]).long().cuda())
+                D_loss = discriminator(fake_images, torch.tensor([259], device=device).long())
             else:
                 D_loss = 0
             # st()
