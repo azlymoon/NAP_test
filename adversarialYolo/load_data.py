@@ -266,6 +266,7 @@ class PatchSimpleTransformer(nn.Module):
         tensor_img_batch = tensor_img_batch.expand(n_batch, n_feature, -1, -1, -1)
         return tensor_img_batch
 
+
     def deg_to_rad(self, deg):
         return torch.tensor(deg * pi / 180.0).float()
 
@@ -391,6 +392,7 @@ class PatchSimpleTransformer(nn.Module):
         adv_patch = self.medianpooler(adv_patch.unsqueeze(0))
         # print("adv_patch medianpooler size: "+str(adv_patch.size())) ## torch.Size([1, 3, 300, 300])
         # Make a batch of patches
+
         adv_patch = adv_patch.unsqueeze(0)  ##  torch.Size([1, 1, 3, 300, 300])
         adv_batch = adv_patch.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)  ##  torch.Size([8, 14, 3, 300, 300])
         batch_size = torch.Size((lab_batch.size(0), lab_batch.size(1)))
@@ -431,6 +433,7 @@ class PatchSimpleTransformer(nn.Module):
         adv_batch = adv_batch * contrast + brightness + noise
         if not(len(patch_mask)==0):
             adv_batch = adv_batch * mask_batch
+
         if with_rectOccluding:
             rect_occluder = self.rect_occluding(num_rect=2, n_batch=adv_batch.size()[0],
                                                n_feature=adv_batch.size()[1], patch_size=adv_batch.size()[-1],
@@ -457,7 +460,7 @@ class PatchSimpleTransformer(nn.Module):
             cls_mask = cls_mask.expand(-1, -1, -1, adv_batch.size(3))  # torch.Size([8, 14, 3, 300])
             cls_mask = cls_mask.unsqueeze(-1)  # torch.Size([8, 14, 3, 300, 1])
             cls_mask = cls_mask.expand(-1, -1, -1, -1, adv_batch.size(4))  # torch.Size([8, 14, 3, 300, 300])
-            msk_batch = torch.FloatTensor(cls_mask.size()).fill_(1) - cls_mask  # torch.Size([8, 14, 3, 300, 300])
+            msk_batch = torch.ones(cls_mask.size(), device=cls_mask.device) - cls_mask  # torch.Size([8, 14, 3, 300, 300])
 
             # Pad patch and mask to image dimensions
             # Determine size of padding
@@ -473,13 +476,13 @@ class PatchSimpleTransformer(nn.Module):
             # Rotation and rescaling transforms
             anglesize = (lab_batch.size(0) * lab_batch.size(1)) # 8*14 = 112
             if do_rotate:
-                angle = torch.FloatTensor(anglesize).uniform_(self.minangle, self.maxangle)  # torch.Size([112])
+                angle = torch.empty(anglesize, device=device).uniform_(self.minangle, self.maxangle)  # torch.Size([112])
             else: 
-                angle = torch.FloatTensor(anglesize).fill_(0)
+                angle = torch.zeros(anglesize, device=device)
 
             # Resizes and rotates
             current_patch_size = adv_patch.size(-1)
-            lab_batch_scaled = torch.FloatTensor(lab_batch.size()).fill_(0)  # torch.Size([8, 14, 5])
+            lab_batch_scaled = torch.zeros_like(lab_batch, device=device)  # torch.Size([8, 14, 5])
             lab_batch_scaled[:, :, 1] = lab_batch[:, :, 1] * img_size
             lab_batch_scaled[:, :, 2] = lab_batch[:, :, 2] * img_size
             lab_batch_scaled[:, :, 3] = lab_batch[:, :, 3] * img_size
@@ -490,9 +493,9 @@ class PatchSimpleTransformer(nn.Module):
             targetoff_x = lab_batch[:, :, 3].view(np.prod(batch_size))  # torch.Size([112]) 8*14
             targetoff_y = lab_batch[:, :, 4].view(np.prod(batch_size))  # torch.Size([112]) 8*14
             if(rand_loc):
-                off_x = targetoff_x*(torch.FloatTensor(targetoff_x.size()).uniform_(-0.4,0.4))
+                off_x = targetoff_x*(torch.empty_like(targetoff_x, device=device).uniform_(-0.4,0.4))
                 target_x = target_x + off_x
-                off_y = targetoff_y*(torch.FloatTensor(targetoff_y.size()).uniform_(-0.4,0.4))
+                off_y = targetoff_y*(torch.empty_like(targetoff_y, device=device).uniform_(-0.4,0.4))
                 target_y = target_y + off_y
             target_y = target_y - 0.05
             # print("current_patch_size : "+str(current_patch_size))
@@ -512,7 +515,7 @@ class PatchSimpleTransformer(nn.Module):
             cos = torch.cos(angle)        
 
             # Theta = rotation,rescale matrix
-            theta = torch.FloatTensor(anglesize, 2, 3).fill_(0)  # torch.Size([112, 2, 3])
+            theta = torch.zeros(anglesize, 2, 3, device=device)  # torch.Size([112, 2, 3])
             theta[:, 0, 0] = cos/scale
             theta[:, 0, 1] = sin/scale
             theta[:, 0, 2] = tx*cos/scale+ty*sin/scale
@@ -554,7 +557,7 @@ class PatchSimpleTransformer(nn.Module):
             # cos = torch.cos(angle)        
 
             # # Theta = rotation,rescale matrix
-            # theta = torch.FloatTensor(anglesize, 2, 3).fill_(0)  # torch.Size([112, 2, 3])
+            # theta = torch.zeros(anglesize, 2, 3, device=device)  # torch.Size([112, 2, 3])
             # theta[:, 0, 0] = cos/scale
             # theta[:, 0, 1] = sin/scale
             # theta[:, 0, 2] = 0
@@ -565,7 +568,7 @@ class PatchSimpleTransformer(nn.Module):
 
             '''
             # Theta2 = translation matrix
-            theta2 = torch.FloatTensor(anglesize, 2, 3).fill_(0)
+            theta2 = torch.zeros(anglesize, 2, 3, device=device)
             theta2[:, 0, 0] = 1
             theta2[:, 0, 1] = 0
             theta2[:, 0, 2] = (-target_x + 0.5) * 2
@@ -673,6 +676,7 @@ class PatchTransformer(nn.Module):
         tensor_img_batch = tensor_img_batch.expand(n_batch, n_feature, -1, -1, -1)
         return tensor_img_batch
 
+
     def forward(self, adv_patch, lab_batch, img_size, patch_mask=[], by_rectangle=False, do_rotate=True, rand_loc=True, with_black_trans=False, scale_rate=0.2, with_crease=False, with_projection=False, with_rectOccluding=False, enable_empty_patch=False, enable_no_random=False, enable_blurred=True):
         # torch.set_printoptions(edgeitems=sys.maxsize)
         # print("adv_patch size: "+str(adv_patch.size()))
@@ -687,6 +691,7 @@ class PatchTransformer(nn.Module):
         # st()
                                             # np.save('gg', adv_batch.cpu().detach().numpy())   
                                             # gg=np.load('gg.npy')   np.argwhere(gg!=adv_batch.cpu().detach().numpy())
+
         device = adv_patch.device
 
         def deg_to_rad(deg):
@@ -734,7 +739,6 @@ class PatchTransformer(nn.Module):
             org = org.unsqueeze(0)
             dst = dst.unsqueeze(0)
             warpR = tgm.get_perspective_transform(org, dst).float()
-            return warpR
 
         ## get y gray
         # adv_patch_yuv = Colorspace("rgb", "yuv")(adv_patch)
@@ -826,6 +830,7 @@ class PatchTransformer(nn.Module):
             adv_patch = adv_patch.unsqueeze(0)
         # print("adv_patch medianpooler size: "+str(adv_patch.size())) ## torch.Size([1, 3, 300, 300])
         # Make a batch of patches
+
         adv_patch = adv_patch.unsqueeze(0)  ##  torch.Size([1, 1, 3, 300, 300])
         adv_batch = adv_patch.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)
         batch_size = torch.Size((lab_batch.size(0), lab_batch.size(1)))
@@ -834,6 +839,7 @@ class PatchTransformer(nn.Module):
             patch_mask = patch_mask.to(device)
             patch_mask = patch_mask.unsqueeze(0)
             mask_batch = patch_mask.expand(lab_batch.size(0), lab_batch.size(1), -1, -1, -1)
+
 
         # Contrast, brightness and noise transforms
         
@@ -870,11 +876,13 @@ class PatchTransformer(nn.Module):
             adv_batch = adv_batch * contrast + brightness + noise
         if not(len(patch_mask)==0):
             adv_batch = adv_batch * mask_batch
+
         if with_rectOccluding:
             rect_occluder = self.rect_occluding(num_rect=2, n_batch=adv_batch.size()[0],
                                                n_feature=adv_batch.size()[1], patch_size=adv_batch.size()[-1],
                                                device=device)
             adv_batch = torch.where(rect_occluder == 0, adv_batch, rect_occluder)
+
 
 
         # # get   gray
@@ -931,7 +939,7 @@ class PatchTransformer(nn.Module):
             cls_mask = cls_mask.expand(-1, -1, -1, adv_batch.size(3))  # torch.Size([8, 14, 3, 300])
             cls_mask = cls_mask.unsqueeze(-1)  # torch.Size([8, 14, 3, 300, 1])
             cls_mask = cls_mask.expand(-1, -1, -1, -1, adv_batch.size(4))  # torch.Size([8, 14, 3, 300, 300])
-            msk_batch = torch.FloatTensor(cls_mask.size()).fill_(1) - cls_mask  # torch.Size([8, 14, 3, 300, 300])
+            msk_batch = torch.ones(cls_mask.size(), device=cls_mask.device) - cls_mask  # torch.Size([8, 14, 3, 300, 300])
 
             # Pad patch and mask to image dimensions
             # Determine size of padding
@@ -947,13 +955,13 @@ class PatchTransformer(nn.Module):
             # Rotation and rescaling transforms
             anglesize = (lab_batch.size(0) * lab_batch.size(1)) # 8*14 = 112
             if do_rotate:
-                angle = torch.FloatTensor(anglesize).uniform_(self.minangle, self.maxangle)  # torch.Size([112])
+                angle = torch.empty(anglesize, device=device).uniform_(self.minangle, self.maxangle)  # torch.Size([112])
             else: 
-                angle = torch.FloatTensor(anglesize).fill_(0)
+                angle = torch.zeros(anglesize, device=device)
 
             # Resizes and rotates
             current_patch_size = adv_patch.size(-1)
-            lab_batch_scaled = torch.FloatTensor(lab_batch.size()).fill_(0)  # torch.Size([8, 14, 5])
+            lab_batch_scaled = torch.zeros_like(lab_batch, device=device)  # torch.Size([8, 14, 5])
             lab_batch_scaled[:, :, 1] = lab_batch[:, :, 1] * img_size
             lab_batch_scaled[:, :, 2] = lab_batch[:, :, 2] * img_size
             lab_batch_scaled[:, :, 3] = lab_batch[:, :, 3] * img_size
@@ -964,9 +972,9 @@ class PatchTransformer(nn.Module):
             targetoff_x = lab_batch[:, :, 3].view(np.prod(batch_size))  # torch.Size([112]) 8*14
             targetoff_y = lab_batch[:, :, 4].view(np.prod(batch_size))  # torch.Size([112]) 8*14
             if(rand_loc):
-                off_x = targetoff_x*(torch.FloatTensor(targetoff_x.size()).uniform_(-0.4,0.4))
+                off_x = targetoff_x*(torch.empty_like(targetoff_x, device=device).uniform_(-0.4,0.4))
                 target_x = target_x + off_x
-                off_y = targetoff_y*(torch.FloatTensor(targetoff_y.size()).uniform_(-0.4,0.4))
+                off_y = targetoff_y*(torch.empty_like(targetoff_y, device=device).uniform_(-0.4,0.4))
                 target_y = target_y + off_y
             target_y = target_y - 0.05
             # print("current_patch_size : "+str(current_patch_size))
@@ -986,7 +994,7 @@ class PatchTransformer(nn.Module):
             cos = torch.cos(angle)        
 
             # Theta = rotation,rescale matrix
-            theta = torch.FloatTensor(anglesize, 2, 3).fill_(0)  # torch.Size([112, 2, 3])
+            theta = torch.zeros(anglesize, 2, 3, device=device)  # torch.Size([112, 2, 3])
             theta[:, 0, 0] = (cos/scale)
             theta[:, 0, 1] = sin/scale
             theta[:, 0, 2] = (tx*cos/scale+ty*sin/scale)
@@ -1034,7 +1042,7 @@ class PatchTransformer(nn.Module):
             # cos = torch.cos(angle)        
 
             # # Theta = rotation,rescale matrix
-            # theta = torch.FloatTensor(anglesize, 2, 3).fill_(0)  # torch.Size([112, 2, 3])
+            # theta = torch.zeros(anglesize, 2, 3, device=device)  # torch.Size([112, 2, 3])
             # theta[:, 0, 0] = cos/scale
             # theta[:, 0, 1] = sin/scale
             # theta[:, 0, 2] = 0
@@ -1045,7 +1053,7 @@ class PatchTransformer(nn.Module):
 
             '''
             # Theta2 = translation matrix
-            theta2 = torch.FloatTensor(anglesize, 2, 3).fill_(0)
+            theta2 = torch.zeros(anglesize, 2, 3, device=device)
             theta2[:, 0, 0] = 1
             theta2[:, 0, 1] = 0
             theta2[:, 0, 2] = (-target_x + 0.5) * 2
@@ -1349,3 +1357,4 @@ if __name__ == '__main__':
         del img_batch, lab_batch, adv_patch, adv_batch_t, output, max_prob
         torch.empty_cache()
         tl0 = time.time()
+
